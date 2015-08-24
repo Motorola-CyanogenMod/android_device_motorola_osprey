@@ -1,0 +1,33 @@
+[
+  {
+    "remote":      "github",
+    "repository":  "MotoG3/android_kernel_motorola_msm8916",
+    "target_path": "kernel/motorola/msm8916",
+    "revision":    "cm-12.1"
+  },
+  {
+    "remote":      "github",
+    "repository":  "MotoG3/android_vendor_motorola_osprey",
+    "target_path": "vendor/motorola/osprey",
+    "revision":    "cm-12.1"
+  },
+  {
+    "remote":      "github",
+    "repository":  "CyanogenMod/android_external_mm-dash",
+    "target_path": "external/mm-dash",
+    "revision":    "cm-12.1"
+  },
+  {
+    "remote":      "github",
+    "repository":  "CyanogenMod/android_hardware_qcom_fm",
+    "target_path": "hardware/qcom/fm",
+    "revision":    "cm-12.1"
+  },
+  {
+    "remote":      "github",
+    "repository":  "CyanogenMod/android_device_qcom_common",
+    "target_path": "device/qcom/common",
+    "revision":    "cm-12.1"
+  }
+]
+

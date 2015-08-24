@@ -1,5 +1,5 @@
-#CM12.1 tree for Moto G (2015)
-* Based off https://github.com/Motorola-CyanogenMod/android_device_motorola_surnia
+#Paranoid tree for Moto G (2015)
+* Based off https://github.com/MotoG3/android_device_motorola_osprey
 
 ##Dependencies:
 ````
@@ -8,36 +8,7 @@ sudo apt-get install g++-multilib gcc-multilib lib32ncurses5-dev lib32readline-g
 ````
 You also need the repo tool for cloning Android source trees.
 
-##Set up and get the repo:
-````
-mkdir ~/cm12.1-tree
-cd ~/cm12.1-tree
-repo init -u git://github.com/CyanogenMod/android.git -b cm-12.1
-mkdir -p .repo/local_manifests
-````
+Copy pa_config/pa_osprey.mk to vendor/pa/products/
 
-Create a file .repo/local_manifests/osprey.xml and paste this in:
-````
-<?xml version="1.0" encoding="UTF-8"?>
-<manifest>
-    <project name="MotoG3/android_device_motorola_osprey" path="device/motorola/osprey" remote="github" revision="cm-12.1" />
-    <project name="MotoG3/android_vendor_motorola_osprey" path="vendor/motorola/osprey" remote="github" revision="cm-12.1" />
-    <project name="MotoG3/android_kernel_motorola_msm8916" path="kernel/motorola/msm8916" remote="github" revision="cm-12.1" />
-    <project name="CyanogenMod/android_external_mm-dash" path="external/mm-dash" remote="github" />
-    <project name="CyanogenMod/android_hardware_qcom_fm" path="hardware/qcom/fm" remote="github" />
-    <project name="CyanogenMod/android_device_qcom_common" path="device/qcom/common" remote="github" />
-</manifest>
-````
+then run ./rom_build.sh osprey
 
-Then fetch the repositories
-````
-repo sync
-````
-
-##Building:
-````
-source build/envsetup.sh
-breakfast osprey
-make clean
-brunch osprey
-````
