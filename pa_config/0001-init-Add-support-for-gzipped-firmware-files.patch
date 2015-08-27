@@ -1,0 +1,204 @@
+From 969c01404c174b10a58658fe94ea887f40742e70 Mon Sep 17 00:00:00 2001
+From: Chris Fries <cfries@motorola.com>
+Date: Fri, 13 Mar 2015 10:04:09 -0500
+Subject: [PATCH] init: Add support for gzipped firmware files
+
+In case no matching firmware is found, re-search the paths for
+[path][firmware].gz and use that instead if found.
+
+Reviewed-on: http://gerrit.mot.com/724787
+SLTApproved: Slta Waiver <sltawvr@motorola.com>
+Tested-by: Jira Key <jirakey@motorola.com>
+Reviewed-by: Wen-Long Che <wenlong@motorola.com>
+SME-Granted: Gerrit Application <gerritmailarchive@motorola.com>
+Reviewed-by: Christopher Fries <cfries@motorola.com>
+Submit-Approved: Jira Key <jirakey@motorola.com>
+
+Change-Id: I74e42ab3c77eb7722c58042489d7bd4856f3be63
+---
+ init/Android.mk |  5 +++-
+ init/devices.c  | 87 ++++++++++++++++++++++++++++++++++++++++++---------------
+ 2 files changed, 68 insertions(+), 24 deletions(-)
+
+diff --git a/init/Android.mk b/init/Android.mk
+index 2e326a8..0769bda 100755
+--- a/init/Android.mk
++++ b/init/Android.mk
+@@ -66,7 +66,8 @@ LOCAL_STATIC_LIBRARIES := \
+ 	libmincrypt \
+ 	libext4_utils_static \
+ 	libext2_blkid \
+-	libext2_uuid_static
++	libext2_uuid_static \
++	libz
+ 
+ LOCAL_ADDITIONAL_DEPENDENCIES += $(LOCAL_PATH)/Android.mk
+ ifneq ($(strip $(TARGET_PLATFORM_DEVICE_BASE)),)
+@@ -79,6 +80,8 @@ ifneq ($(strip $(TARGET_PROP_PATH_FACTORY)),)
+ LOCAL_CFLAGS += -DOVERRIDE_PROP_PATH_FACTORY=\"$(TARGET_PROP_PATH_FACTORY)\"
+ endif
+ 
++LOCAL_C_INCLUDES += external/zlib
++
+ include $(BUILD_EXECUTABLE)
+ 
+ # Make a symlink from /sbin/ueventd and /sbin/watchdogd to /init
+diff --git a/init/devices.c b/init/devices.c
+index 4167f55..43a2722 100644
+--- a/init/devices.c
++++ b/init/devices.c
+@@ -47,6 +47,7 @@
+ #include "ueventd_parser.h"
+ #include "util.h"
+ #include "log.h"
++#include <zlib.h>
+ 
+ #define UNUSED __attribute__((__unused__))
+ 
+@@ -942,23 +943,20 @@ static void handle_device_event(struct uevent *uevent)
+     }
+ }
+ 
+-static int load_firmware(int fw_fd, int loading_fd, int data_fd)
++static int load_firmware(int fw_fd, gzFile gz_fd, int loading_fd, int data_fd)
+ {
+-    struct stat st;
+-    long len_to_copy;
+     int ret = 0;
+ 
+-    if(fstat(fw_fd, &st) < 0)
+-        return -1;
+-    len_to_copy = st.st_size;
+-
+     write(loading_fd, "1", 1);  /* start transfer */
+ 
+-    while (len_to_copy > 0) {
++    while (1) {
+         char buf[PAGE_SIZE];
+         ssize_t nr;
+ 
+-        nr = read(fw_fd, buf, sizeof(buf));
++        if (gz_fd)
++            nr = gzread(gz_fd, buf, sizeof(buf));
++        else
++            nr = read(fw_fd, buf, sizeof(buf));
+         if(!nr)
+             break;
+         if(nr < 0) {
+@@ -966,7 +964,6 @@ static int load_firmware(int fw_fd, int loading_fd, int data_fd)
+             break;
+         }
+ 
+-        len_to_copy -= nr;
+         while (nr > 0) {
+             ssize_t nw = 0;
+ 
+@@ -982,8 +979,10 @@ static int load_firmware(int fw_fd, int loading_fd, int data_fd)
+ out:
+     if(!ret)
+         write(loading_fd, "0", 1);  /* successful end of transfer */
+-    else
++    else {
++        ERROR("%s: aborted transfer\n", __func__);
+         write(loading_fd, "-1", 2); /* abort transfer */
++    }
+ 
+     return ret;
+ }
+@@ -993,11 +992,47 @@ static int is_booting(void)
+     return access("/dev/.booting", F_OK) == 0;
+ }
+ 
++gzFile fw_gzopen(const char *fname, const char *mode)
++{
++    char *file1 = NULL, *file2 = NULL, *file3 = NULL;
++    int l;
++    gzFile gz_fd = NULL;
++
++    l = asprintf(&file1, FIRMWARE_DIR1"/%s.gz", fname);
++    if (l == -1)
++        goto out;
++
++    l = asprintf(&file2, FIRMWARE_DIR2"/%s.gz", fname);
++    if (l == -1)
++        goto file1_free_out;
++
++    l = asprintf(&file3, FIRMWARE_DIR3"/%s.gz", fname);
++    if (l == -1)
++        goto file2_free_out;
++
++    gz_fd = gzopen(file1, mode);
++    if(!gz_fd) {
++        gz_fd = gzopen(file2, mode);
++        if (!gz_fd) {
++            gz_fd = gzopen(file3, mode);
++        }
++    }
++
++    free(file3);
++file2_free_out:
++    free(file2);
++file1_free_out:
++    free(file1);
++out:
++    return gz_fd;
++}
++
+ static void process_firmware_event(struct uevent *uevent)
+ {
+     char *root, *loading, *data, *file1 = NULL, *file2 = NULL, *file3 = NULL;
+     int l, loading_fd, data_fd, fw_fd;
+     int booting = is_booting();
++    gzFile gz_fd = NULL;
+ 
+     INFO("firmware: loading '%s' for '%s'\n",
+          uevent->firmware, uevent->path);
+@@ -1041,27 +1076,33 @@ try_loading_again:
+         if (fw_fd < 0) {
+             fw_fd = open(file3, O_RDONLY);
+             if (fw_fd < 0) {
+-                if (booting) {
+-                        /* If we're not fully booted, we may be missing
+-                         * filesystems needed for firmware, wait and retry.
+-                         */
+-                    usleep(100000);
+-                    booting = is_booting();
+-                    goto try_loading_again;
++                gz_fd = fw_gzopen(uevent->firmware, "rb");
++                if (!gz_fd) {
++                    if (booting || (access("/system/etc/firmware", F_OK) != 0)) {
++                            /* If we're not fully booted, we may be missing
++                             * filesystems needed for firmware, wait and retry.
++                             */
++                        usleep(100000);
++                        booting = is_booting();
++                        goto try_loading_again;
++                    }
++                    INFO("firmware: could not open '%s' %d\n", uevent->firmware, errno);
++                    write(loading_fd, "-1", 2);
++                    goto data_close_out;
+                 }
+-                INFO("firmware: could not open '%s' %d\n", uevent->firmware, errno);
+-                write(loading_fd, "-1", 2);
+-                goto data_close_out;
+             }
+         }
+     }
+ 
+-    if(!load_firmware(fw_fd, loading_fd, data_fd))
++    if(!load_firmware(fw_fd, gz_fd, loading_fd, data_fd))
+         INFO("firmware: copy success { '%s', '%s' }\n", root, uevent->firmware);
+     else
+         INFO("firmware: copy failure { '%s', '%s' }\n", root, uevent->firmware);
+ 
+-    close(fw_fd);
++    if (gz_fd)
++        gzclose(gz_fd);
++    else
++        close(fw_fd);
+ data_close_out:
+     close(data_fd);
+ loading_close_out:
+-- 
+2.3.6
+
